@@ -1,0 +1,2 @@
+rtsp://admin:Yolo-v05@192.168.100.48:554/live.sdp
+http://192.168.100.2:8080/prueba.cgi 
