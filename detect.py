@@ -32,7 +32,7 @@ from pathlib import Path
 from email.mime.text import MIMEText
 from smtplib import SMTP
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -48,7 +48,7 @@ from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadStreams
 from utils.general import (LOGGER, check_file, check_img_size, check_imshow, check_requirements, colorstr, cv2,
                            increment_path, non_max_suppression, print_args, scale_coords, strip_optimizer, xyxy2xywh)
 from utils.plots import Annotator, colors, save_one_box
-from utils.torch_utils import select_device, time_sync
+from utils.torch_utils import select_device#, time_sync
 
 from_address = 'sumo-alerts@gmsectec.com'
 addressPass = "dQKD7brV7tGZ36Rc"
@@ -117,7 +117,7 @@ def run(
     vid_path, vid_writer = [None] * bs, [None] * bs
 
     alerta = False
-    correo = 0
+    fin,up = 0,0
 
     # Run inference
     model.warmup(imgsz=(1 if pt else bs, 3, *imgsz))  # warmup
@@ -216,25 +216,30 @@ def run(
         # if s != '':
         #     LOGGER.info(f'{s}')  # Time -- Done. ({t3 - t2:.3f}s)')
 
-            if alerta == True:
-                now = datetime.now().minute
-                message = s
-                correo += 1
-                print(message)
+            if alerta:
+                if s != '':
+                    message = s
+                if up >= fin:             
+                    now = datetime.now()
+                    print('Alerta')
+                    print(now)
+                    print(message)
+                    fin = now + timedelta(seconds = 5) 
+                    # mime_message = MIMEText (message,'html')
+                    # mime_message['From'] = from_address
+                    # mime_message['To'] = ", ".join(to_address)
+                    # mime_message['Subject'] = 'Prueba'
 
-                if correo == 1:                    
-                    mime_message = MIMEText (message,'html')
-                    mime_message['From'] = from_address
-                    mime_message['To'] = ", ".join(to_address)
-                    mime_message['Subject'] = 'Prueba'
+                    # smtp = SMTP('smtp.office365.com',587)
+                    # smtp.ehlo()
+                    # smtp.starttls()
+                    # smtp.ehlo()
+                    # smtp.login(from_address,addressPass)
+                    # smtp.sendmail(from_address, to_address, mime_message.as_string())
+                    # smtp.quit()
 
-                    smtp = SMTP('smtp.office365.com',587)
-                    smtp.ehlo()
-                    smtp.starttls()
-                    smtp.ehlo()
-                    smtp.login(from_address,addressPass)
-                    smtp.sendmail(from_address, to_address, mime_message.as_string())
-                    smtp.quit()
+                up = datetime.now()
+
 
         if cv2.waitKey(25) & 0xFF == ord('q'):
             break
@@ -289,6 +294,6 @@ def main(opt):
 
 
 if __name__ == "__main__":
-    print("cuda" if torch.cuda.is_available() else "cpu")
+    print("Cuda" if torch.cuda.is_available() else "cpu")
     opt = parse_opt()
     main(opt)
