@@ -29,13 +29,16 @@ import os
 import sys
 from pathlib import Path
 
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
 from smtplib import SMTP
 import time
 from datetime import datetime, timedelta
 
 import torch
 import torch.backends.cudnn as cudnn
+import schedule
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
@@ -53,7 +56,54 @@ from utils.torch_utils import select_device#, time_sync
 from_address = 'sumo-alerts@gmsectec.com'
 addressPass = "dQKD7brV7tGZ36Rc"
 to_address = ['luis.cano@gmsectec.com']
+s,p,imc,save_dir = '','','',''
 
+delay = 15
+now = datetime.now()
+reactivate = 30
+fin = now 
+
+def send_mail(f):
+    file = open(f, "rb")
+    message = """
+    <html>
+    <head>Prueba</head> 
+    <body>
+    <img src="cid:alert">
+    </body>
+    </html> """
+
+    mime_message = MIMEMultipart()
+    mime_message.attach(MIMEText (message,'html'))
+    mime_message['From'] = from_address
+    mime_message['To'] = ", ".join(to_address)
+    mime_message['Subject'] = 'Prueba'
+    
+    attach_image = MIMEImage(file.read())
+    attach_image.add_header('Content-ID', '<alert>')
+    mime_message.attach(attach_image)
+
+    smtp = SMTP('smtp.office365.com',587)
+    smtp.ehlo()
+    smtp.starttls()
+    smtp.ehlo()
+    smtp.login(from_address,addressPass)
+    smtp.sendmail(from_address, to_address, mime_message.as_string())
+    smtp.quit()
+
+
+def send_alert():    
+    global s,p,imc,save_dir,fin  
+    # print('Camara', p)
+    print('Alerta')
+    print(s)
+    f = save_one_box(imc, file=save_dir / 'Alerts' / f'{p.stem}.jpg', BGR=True)
+    if False:
+        send_mail(f)
+    fin = now + timedelta(seconds=reactivate)
+
+
+schedule.every(delay).seconds.do(send_alert)
 
 @torch.no_grad()
 def run(
@@ -84,6 +134,7 @@ def run(
         half=False,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
 ):
+    global s,p,imc,save_dir,delay,now,fin
 
     source = str(source)
     save_img = not nosave and not source.endswith('.txt')  # save inference images
@@ -116,8 +167,8 @@ def run(
         bs = 1  # batch_size
     vid_path, vid_writer = [None] * bs, [None] * bs
 
-    alerta = False
-    fin,up = 0,0
+    
+    #alerta = False
 
     # Run inference
     model.warmup(imgsz=(1 if pt else bs, 3, *imgsz))  # warmup
@@ -140,7 +191,7 @@ def run(
 
         # NMS
         pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
-        #dt[2] += time_sync() - t3
+        # dt[2] += time_sync() - t3
         # Second-stage classifier (optional)
         # pred = utils.general.apply_classifier(pred, classifier_model, im, im0s)
 
@@ -165,35 +216,33 @@ def run(
                 det[:, :4] = scale_coords(im.shape[2:], det[:, :4], im0.shape).round()
 
                 # Print results
-                for x1,y1,x2,y2,por,c in det:
-                    n = (det[:, -1] == c).sum()  # detections per class
+                for x1,y1,x2,y2,por,cls in det:
+                    n = (det[:, -1] == cls).sum()  # detections per class
+                    c = int(cls)  # integer class
                     if (por >= 0.5):
-                        alerta = True
-                        s += f"{names[int(c)]} in  X:{x1+((x2-x1)/2)}, Y:{y1+((y2-y1)/2)}, P:{(por*100):.2f}\n"  # add to string
+                        s += f"{p},{names[c]} in  X:{x1+((x2-x1)/2)}, Y:{y1+((y2-y1)/2)}, P:{(por*100):.2f}\n"  # add to string
+                        xyxy = x1,y1,x2,y2      
+                        label = None if hide_labels else (names[c] if hide_conf else f'{names[c]}')# {conf:.2f}')
+                        annotator.box_label(xyxy, label, color=colors(c, True))
 
-                # Write results
-                for *xyxy, conf, cls in reversed(det):                    
+                now = datetime.now()
+                        
+                for *xyxy, conf, cls in reversed(det):
                     if (conf >= 0.5):
-                        if save_txt:  # Write to file
-                            xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
-                            line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
-                            with open(f'{txt_path}.txt', 'a') as f:
-                                f.write(('%g ' * len(line)).rstrip() % line + '\n')
+                        if now >= fin:
+                            send_alert()
+                            fin = now + timedelta(seconds=reactivate)
+                            print("reactivar")
 
-                        if save_img or save_crop or view_img:  # Add bbox to image
-                            c = int(cls)  # integer class
-                            label = None if hide_labels else (names[c] if hide_conf else f'{names[c]}')# {conf:.2f}')
-                            annotator.box_label(xyxy, label, color=colors(c, True))
-                        if save_crop:
-                            save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
-
+                        schedule.run_pending()
+              
             # Stream results
             im0 = annotator.result()
             if view_img:
                 cv2.imshow('YoloV5', im0)
                 cv2.waitKey(1)  # 1 millisecond
 
-            # Save results (image with detections)
+            # Save results (image/video with detections)
             if save_img:
                 if dataset.mode == 'image':
                     cv2.imwrite(save_path, im0)
@@ -212,33 +261,10 @@ def run(
                         vid_writer[i] = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
                     vid_writer[i].write(im0)
 
-        # Print time (inference-only)
-        # if s != '':
-        #     LOGGER.info(f'{s}')  # Time -- Done. ({t3 - t2:.3f}s)')
 
-            if alerta:
-                if s != '':
-                    message = s
-                if up >= fin:             
-                    now = datetime.now()
-                    print('Alerta')
-                    print(now)
-                    print(message)
-                    fin = now + timedelta(seconds = 5) 
-                    # mime_message = MIMEText (message,'html')
-                    # mime_message['From'] = from_address
-                    # mime_message['To'] = ", ".join(to_address)
-                    # mime_message['Subject'] = 'Prueba'
-
-                    # smtp = SMTP('smtp.office365.com',587)
-                    # smtp.ehlo()
-                    # smtp.starttls()
-                    # smtp.ehlo()
-                    # smtp.login(from_address,addressPass)
-                    # smtp.sendmail(from_address, to_address, mime_message.as_string())
-                    # smtp.quit()
-
-                up = datetime.now()
+            # Print time (inference-only)
+            # if s != '':
+            #     LOGGER.info(f'{s}')  # Time -- Done. ({t3 - t2:.3f}s)')          
 
 
         if cv2.waitKey(25) & 0xFF == ord('q'):
